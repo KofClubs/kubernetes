@@ -796,7 +796,7 @@ func getPodStrategy(cpo *createPodsOp) (testutils.TestPodCreateStrategy, error) 
 		}
 	}
 	if cpo.PersistentVolumeClaimTemplatePath == nil {
-		return testutils.NewCustomCreatePodStrategy(basePod), nil
+		return testutils.NewCustomCreatePodStrategy(basePod, testutils.WithFilterErr(isRetryableAPIError)), nil
 	}
 
 	pvTemplate, err := getPersistentVolumeSpecFromFile(cpo.PersistentVolumeTemplatePath)
@@ -855,4 +855,9 @@ func getCustomVolumeFactory(pvTemplate *v1.PersistentVolume) func(id int) *v1.Pe
 		}
 		return pv
 	}
+}
+
+func isRetryableAPIError(err error) bool {
+	// These errors may indicate a transient error that we can retry in tests.
+	return apierrors.IsInternalError(err) || apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err)
 }
