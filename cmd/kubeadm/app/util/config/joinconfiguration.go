@@ -29,16 +29,27 @@ import (
 	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	kubeadmutil "k8s.io/kubernetes/cmd/kubeadm/app/util"
 	"k8s.io/kubernetes/cmd/kubeadm/app/util/config/strict"
+	kubeadmruntime "k8s.io/kubernetes/cmd/kubeadm/app/util/runtime"
 )
 
 // SetJoinDynamicDefaults checks and sets configuration values for the JoinConfiguration object
 func SetJoinDynamicDefaults(cfg *kubeadmapi.JoinConfiguration) error {
+	var err error
+
 	addControlPlaneTaint := false
 	if cfg.ControlPlane != nil {
 		addControlPlaneTaint = true
 	}
 	if err := SetNodeRegistrationDynamicDefaults(&cfg.NodeRegistration, addControlPlaneTaint); err != nil {
 		return err
+	}
+
+	if cfg.NodeRegistration.CRISocket == "" {
+		cfg.NodeRegistration.CRISocket, err = kubeadmruntime.DetectCRISocket()
+		if err != nil {
+			return err
+		}
+		klog.V(1).Infof("detected and using CRI socket: %s", cfg.NodeRegistration.CRISocket)
 	}
 
 	return SetJoinControlPlaneDefaults(cfg.ControlPlane)

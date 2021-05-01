@@ -107,14 +107,6 @@ func SetNodeRegistrationDynamicDefaults(cfg *kubeadmapi.NodeRegistrationOptions,
 		cfg.Taints = []v1.Taint{kubeadmconstants.OldControlPlaneTaint}
 	}
 
-	if cfg.CRISocket == "" {
-		cfg.CRISocket, err = kubeadmruntime.DetectCRISocket()
-		if err != nil {
-			return err
-		}
-		klog.V(1).Infof("detected and using CRI socket: %s", cfg.CRISocket)
-	}
-
 	return nil
 }
 
@@ -214,7 +206,7 @@ func DefaultedStaticInitConfiguration() (*kubeadmapi.InitConfiguration, error) {
 	return internalcfg, nil
 }
 
-// DefaultedInitConfiguration takes a versioned init config (often populated by flags), defaults it and converts it into internal InitConfiguration
+// DefaultedInitConfiguration takes supported versioned init configs (often populated by flags) and converts it into internal InitConfiguration
 func DefaultedInitConfiguration(versionedInitCfg *kubeadmapiv1.InitConfiguration, versionedClusterCfg *kubeadmapiv1.ClusterConfiguration) (*kubeadmapi.InitConfiguration, error) {
 	internalcfg := &kubeadmapi.InitConfiguration{}
 
@@ -234,14 +226,11 @@ func DefaultedInitConfiguration(versionedInitCfg *kubeadmapiv1.InitConfiguration
 	if err := SetInitDynamicDefaults(internalcfg); err != nil {
 		return nil, err
 	}
-	// Validates cfg (flags/configs + defaults + dynamic defaults)
-	if err := validation.ValidateInitConfiguration(internalcfg).ToAggregate(); err != nil {
-		return nil, err
-	}
+
 	return internalcfg, nil
 }
 
-// LoadInitConfigurationFromFile loads a supported versioned InitConfiguration from a file, converts it into internal config, defaults it and verifies it.
+// LoadInitConfigurationFromFile loads a supported versioned InitConfiguration from a file and converts it into internal InitConfiguration.
 func LoadInitConfigurationFromFile(cfgPath string) (*kubeadmapi.InitConfiguration, error) {
 	klog.V(1).Infof("loading configuration from %q", cfgPath)
 
@@ -259,13 +248,39 @@ func LoadInitConfigurationFromFile(cfgPath string) (*kubeadmapi.InitConfiguratio
 // Right thereafter, the configuration is defaulted again with dynamic values (like IP addresses of a machine, etc)
 // Lastly, the internal config is validated and returned.
 func LoadOrDefaultInitConfiguration(cfgPath string, versionedInitCfg *kubeadmapiv1.InitConfiguration, versionedClusterCfg *kubeadmapiv1.ClusterConfiguration) (*kubeadmapi.InitConfiguration, error) {
+	var initCfg *kubeadmapi.InitConfiguration
+	var err error
+
 	if cfgPath != "" {
 		// Loads configuration from config file, if provided
 		// Nb. --config overrides command line flags
-		return LoadInitConfigurationFromFile(cfgPath)
+		initCfg, err = LoadInitConfigurationFromFile(cfgPath)
+	} else {
+		initCfg, err = DefaultedInitConfiguration(versionedInitCfg, versionedClusterCfg)
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	return DefaultedInitConfiguration(versionedInitCfg, versionedClusterCfg)
+	// Detects CRISocket if and only if it is not specified, otherwise specifies with the versioned InitConfiguration first
+	if versionedInitCfg.NodeRegistration.CRISocket == "" {
+		if initCfg.NodeRegistration.CRISocket == "" {
+			initCfg.NodeRegistration.CRISocket, err = kubeadmruntime.DetectCRISocket()
+			if err != nil {
+				return nil, err
+			}
+			klog.V(1).Infof("detected and using CRI socket: %s", initCfg.NodeRegistration.CRISocket)
+		}
+	} else {
+		initCfg.NodeRegistration.CRISocket = versionedInitCfg.NodeRegistration.CRISocket
+	}
+
+	// Validates cfg (flags/configs + defaults + dynamic defaults)
+	if err := validation.ValidateInitConfiguration(initCfg).ToAggregate(); err != nil {
+		return nil, err
+	}
+
+	return initCfg, nil
 }
 
 // BytesToInitConfiguration converts a byte slice to an internal, defaulted and validated InitConfiguration object.
@@ -349,11 +364,6 @@ func documentMapToInitConfiguration(gvkmap kubeadmapi.DocumentMap, allowDeprecat
 
 	// Applies dynamic defaults to settings not provided with flags
 	if err := SetInitDynamicDefaults(initcfg); err != nil {
-		return nil, err
-	}
-
-	// Validates cfg (flags/configs + defaults + dynamic defaults)
-	if err := validation.ValidateInitConfiguration(initcfg).ToAggregate(); err != nil {
 		return nil, err
 	}
 
